@@ -17,6 +17,13 @@ task test    # build and run the unit tests via CTest
 task check   # clang-format / yamllint checks
 ```
 
+## Releases
+
+Releases follow [Semantic Versioning](https://semver.org) and are tagged on `main`.
+See the [Releases page](https://github.com/dangreco/wmmm/releases) and
+[CHANGELOG.md](CHANGELOG.md). To pin a release in ESPHome, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Licensed under the **GNU General Public License v3.0 or later**
