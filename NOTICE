@@ -1,0 +1,32 @@
+wmmm
+Copyright (C) 2026  Dan Greco <git@dangre.co>
+
+This program is free software licensed under the GNU General Public License,
+version 3 or (at your option) any later version. See the LICENSE file for the
+full terms.
+
+
+Reverse-engineering and non-affiliation notice
+----------------------------------------------
+
+This project implements the AUP/WMMM UART protocol used by the TA640FC-W-ULX
+thermostat. The protocol was independently reverse-engineered through clean-room,
+black-box observation of the device's behavior, solely for the purpose of
+interoperability.
+
+  * No proprietary source code, firmware, binaries, or other copyrighted
+    material belonging to the device manufacturer is included in, or was copied
+    into, this project.
+
+  * This project is an independent work. It is not affiliated with, authorized
+    by, sponsored by, or endorsed by the manufacturer of the TA640FC-W-ULX or
+    any related entity.
+
+  * All product names, trademarks, and registered trademarks are the property of
+    their respective owners. They are used here only to describe the hardware
+    this software interoperates with, and their use does not imply any
+    affiliation or endorsement.
+
+This software is provided for lawful interoperability and educational purposes.
+It is the user's responsibility to ensure their use complies with all applicable
+laws, contracts, and terms of service in their jurisdiction.
