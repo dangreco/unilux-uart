@@ -12,11 +12,6 @@ add_library(project_lib ${LIB_SOURCES})
 target_include_directories(project_lib PUBLIC include)
 target_compile_options(project_lib PRIVATE -Wall -Wextra)
 
-# Executable.
-add_executable(project src/main.cpp)
-target_link_libraries(project PRIVATE project_lib)
-target_compile_options(project PRIVATE -Wall -Wextra)
-
 # Tests: one binary globbing tests/*.cpp; each TEST() becomes its own CTest
 # entry via gtest_discover_tests, auto-discovered.
 include(CTest)
