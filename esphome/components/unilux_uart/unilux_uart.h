@@ -4,6 +4,7 @@
 #include "esphome/core/component.h"
 
 #include "aup.hpp"
+#include "wmmm.hpp"
 
 namespace esphome {
 namespace unilux_uart {
@@ -15,7 +16,11 @@ public:
   void loop() override;
 
 private:
-  unilux::aup::Decoder decoder_;
+  /// Decode the WMMM message inside @p frame and log it at debug level.
+  void log_frame_(const unilux::aup::Frame &frame);
+
+  unilux::aup::Decoder decoder_; ///< AUP byte-framing decoder.
+  unilux::Decoder wmmm_decoder_; ///< WMMM message decoder.
 };
 
 } // namespace unilux_uart
