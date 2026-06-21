@@ -3,7 +3,12 @@
 namespace esphome {
 namespace wmmm {
 
-void WmmmComponent::setup() {}
+static const char *const TAG = "wmmm";
+
+void WmmmComponent::setup() {
+  ESP_LOGCONFIG(TAG, "WMMM:");
+  check_uart_settings(115200);
+}
 
 void WmmmComponent::loop() {}
 
