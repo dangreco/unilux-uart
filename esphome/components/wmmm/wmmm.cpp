@@ -10,7 +10,11 @@ void WmmmComponent::dump_config() {
   check_uart_settings(115200);
 }
 
-void WmmmComponent::setup() {}
+void WmmmComponent::setup() {
+  // Plumbing check: forces src/aup.cpp to link. Real decode wiring is a
+  // follow-up.
+  (void)decoder_.consume(0x00);
+}
 
 void WmmmComponent::loop() {}
 
