@@ -3,3 +3,4 @@
 -DUSE_HOST
 -I../../../vendor/esphome
 -I../../../stubs
+-I../../../include
