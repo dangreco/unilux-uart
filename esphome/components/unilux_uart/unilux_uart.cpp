@@ -3,6 +3,10 @@
 #include "esphome/core/alloc_helpers.h"
 #include "esphome/core/log.h"
 
+#include "messages.hpp"
+
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace esphome {
@@ -38,6 +42,21 @@ void UniluxUartComponent::log_frame_(const unilux::aup::Frame &frame) {
              format_hex_pretty(reserved, '.', false).c_str());
     ESP_LOGD(TAG, "│ payload (%u): %s", (unsigned)wmmm->payload.size(),
              format_hex_pretty(wmmm->payload, ' ', false).c_str());
+
+    // Decode the WMMM frame into a concrete message type and switch on it.
+    if (auto msg = unilux::decode_message(*wmmm)) {
+      std::visit(
+          [&](auto &&m) {
+            using T = std::decay_t<decltype(m)>;
+            if constexpr (std::is_same_v<T, unilux::message::Temperature>) {
+              ESP_LOGD(TAG, "│ Temperature t1=%.1f°C t2=%.1f°C",
+                       static_cast<double>(m.t1), static_cast<double>(m.t2));
+            }
+          },
+          *msg);
+    } else {
+      ESP_LOGD(TAG, "│ <no typed message for id 0x%02X>", wmmm->msg_id);
+    }
   } else {
     // Payload too short to be a WMMM message; show the raw AUP payload instead.
     ESP_LOGD(TAG, "│ WMMM <undecodable, %u bytes>",
