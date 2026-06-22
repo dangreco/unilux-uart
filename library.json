@@ -5,7 +5,7 @@
   "keywords": "uart, protocol, esphome, aup, wmmm",
   "license": "GPL-3.0-or-later",
   "repository": { "type": "git", "url": "https://github.com/dangreco/unilux-uart.git" },
-  "headers": ["wmmm.hpp", "aup.hpp"],
+  "headers": ["messages.hpp", "wmmm.hpp", "aup.hpp"],
   "build": {
     "srcDir": "src",
     "includeDir": "include"
