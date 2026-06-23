@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "messages.hpp"
+#include "messages/mode.hpp"
 #include "messages/target_temperature.hpp"
 #include "messages/temperature.hpp"
 #include "wmmm.hpp"
@@ -36,6 +37,7 @@
 using unilux::AnyMessage;
 using unilux::decode_message;
 using unilux::Frame;
+using unilux::message::Mode;
 using unilux::message::TargetTemperature;
 using unilux::message::Temperature;
 
@@ -75,6 +77,16 @@ TEST(DecodeMessage, DecodesTargetTemperatureFromMatchingId) {
   const TargetTemperature &target = std::get<TargetTemperature>(*msg);
   EXPECT_FLOAT_EQ(target.t1, 21.5f);
   EXPECT_FLOAT_EQ(target.t2, 0.0f);
+}
+
+TEST(DecodeMessage, DecodesModeFromMatchingId) {
+  std::optional<AnyMessage> msg =
+      decode_message(makeFrame(Mode::ID, {0x01, 0x00, 0x00, 0x00}));
+  ASSERT_TRUE(msg.has_value());
+  ASSERT_TRUE(std::holds_alternative<Mode>(*msg));
+  // Mode occupies the third slot in the AnyMessage variant.
+  EXPECT_EQ(msg->index(), 2u);
+  EXPECT_EQ(std::get<Mode>(*msg).value, Mode::Value::Cool);
 }
 
 // --- Known id, invalid payload ---------------------------------------------

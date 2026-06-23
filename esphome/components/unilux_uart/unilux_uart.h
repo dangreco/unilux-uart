@@ -7,6 +7,7 @@
 
 #include "aup.hpp"
 #include "message.hpp"
+#include "messages/mode.hpp"
 #include "wmmm.hpp"
 
 namespace esphome {
@@ -67,6 +68,9 @@ public:
   /// Update the target temperature from a received frame and republish (does
   /// not transmit; this reflects device state).
   void publish_target_temperature(float temperature);
+  /// Update the HVAC mode from a received Mode frame and republish (does not
+  /// transmit; this reflects device state). Unknown values are ignored.
+  void publish_mode(unilux::message::Mode::Value value);
 
 protected:
   climate::ClimateTraits traits() override;

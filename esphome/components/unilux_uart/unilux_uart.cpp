@@ -28,6 +28,42 @@ static constexpr uint8_t AUP_TX_COMMAND = 0x10;
 // so the climate is controllable and never shows the ambient value as target.
 static constexpr float DEFAULT_TARGET_TEMPERATURE = 20.0f;
 
+// Map the device's HVAC mode (0x5C) to a Home Assistant climate mode. The
+// device's "auto" is a heat-or-cool mode with a single adjustable setpoint, so
+// it maps to HEAT_COOL (CLIMATE_MODE_AUTO would make the target unadjustable).
+static optional<climate::ClimateMode>
+device_mode_to_climate(unilux::message::Mode::Value value) {
+  switch (value) {
+  case unilux::message::Mode::Value::Heat:
+    return climate::CLIMATE_MODE_HEAT;
+  case unilux::message::Mode::Value::Cool:
+    return climate::CLIMATE_MODE_COOL;
+  case unilux::message::Mode::Value::Auto:
+    return climate::CLIMATE_MODE_HEAT_COOL;
+  }
+  return {};
+}
+
+// Inverse of device_mode_to_climate for the supported modes.
+static unilux::message::Mode::Value
+climate_mode_to_device(climate::ClimateMode mode) {
+  switch (mode) {
+  case climate::CLIMATE_MODE_COOL:
+    return unilux::message::Mode::Value::Cool;
+  case climate::CLIMATE_MODE_HEAT_COOL:
+    return unilux::message::Mode::Value::Auto;
+  default:
+    return unilux::message::Mode::Value::Heat;
+  }
+}
+
+// Whether a climate mode is one this entity exposes (see traits()).
+static bool is_supported_mode(climate::ClimateMode mode) {
+  return mode == climate::CLIMATE_MODE_HEAT ||
+         mode == climate::CLIMATE_MODE_COOL ||
+         mode == climate::CLIMATE_MODE_HEAT_COOL;
+}
+
 void UniluxUartComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Unilux UART:");
   check_uart_settings(115200);
@@ -96,6 +132,12 @@ void UniluxUartComponent::log_frame_(const unilux::aup::Frame &frame) {
               // device state; this does not transmit).
               if (this->climate_ != nullptr)
                 this->climate_->publish_target_temperature(m.t1);
+            } else if constexpr (std::is_same_v<T, unilux::message::Mode>) {
+              ESP_LOGD(TAG, "│ %s", m.to_string().c_str());
+              // The HVAC mode drives the climate entity's mode (reflecting
+              // device state; this does not transmit).
+              if (this->climate_ != nullptr)
+                this->climate_->publish_mode(m.value);
             }
           },
           *msg);
@@ -124,7 +166,10 @@ void UniluxUartClimate::setup() {
   // on the wire, so the entity stays in HEAT. Seed a non-NAN target so the
   // control is live before the first 0x2A frame arrives (the device's 0x2A
   // broadcast overrides it shortly after).
-  this->mode = climate::CLIMATE_MODE_HEAT;
+  // Default to HEAT only until the device's 0x5C broadcast sets the real mode.
+  if (!is_supported_mode(this->mode)) {
+    this->mode = climate::CLIMATE_MODE_HEAT;
+  }
   if (std::isnan(this->target_temperature)) {
     this->target_temperature = DEFAULT_TARGET_TEMPERATURE;
   }
@@ -138,7 +183,11 @@ void UniluxUartClimate::dump_config() {
 climate::ClimateTraits UniluxUartClimate::traits() {
   climate::ClimateTraits traits;
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
-  traits.set_supported_modes({climate::CLIMATE_MODE_HEAT});
+  // Single-point (no two-point flag), so the setpoint is one adjustable value
+  // in every mode. The device's "auto" is exposed as HEAT_COOL.
+  traits.set_supported_modes({climate::CLIMATE_MODE_HEAT,
+                              climate::CLIMATE_MODE_COOL,
+                              climate::CLIMATE_MODE_HEAT_COOL});
   // Defaults; overridden by any `visual:` block in the YAML config.
   traits.set_visual_min_temperature(5.0f);
   traits.set_visual_max_temperature(35.0f);
@@ -156,7 +205,14 @@ void UniluxUartClimate::control(const climate::ClimateCall &call) {
           unilux::message::TargetTemperature(this->target_temperature, 0.0f));
     }
   }
-  this->mode = climate::CLIMATE_MODE_HEAT;
+  if (call.get_mode().has_value() && is_supported_mode(*call.get_mode())) {
+    this->mode = *call.get_mode();
+    // Encode and transmit the new HVAC mode to the device.
+    if (this->parent_ != nullptr) {
+      this->parent_->send_message(
+          unilux::message::Mode(climate_mode_to_device(this->mode)));
+    }
+  }
   this->publish_state();
 }
 
@@ -167,6 +223,16 @@ void UniluxUartClimate::publish_current_temperature(float temperature) {
 
 void UniluxUartClimate::publish_target_temperature(float temperature) {
   this->target_temperature = temperature;
+  this->publish_state();
+}
+
+void UniluxUartClimate::publish_mode(unilux::message::Mode::Value value) {
+  auto mode = device_mode_to_climate(value);
+  if (!mode.has_value()) {
+    ESP_LOGW(TAG, "Unknown HVAC mode 0x%02X", static_cast<unsigned>(value));
+    return;
+  }
+  this->mode = *mode;
   this->publish_state();
 }
 
