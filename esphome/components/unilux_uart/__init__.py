@@ -50,17 +50,33 @@ def _channel_schema(key):
     )
 
 
+def _climate_schema():
+    """Climate schema for the two-way target-temperature control.
+
+    Defaults to enabled with the name "Thermostat", so omitting the key still
+    exposes the climate entity. Set ``disabled: true`` to suppress it.
+    """
+    return (
+        climate.climate_schema(UniluxUartClimate)
+        .extend(cv.COMPONENT_SCHEMA)
+        .extend(
+            {
+                cv.Optional(CONF_NAME, default="Thermostat"): cv.string,
+                cv.Optional(CONF_DISABLED, default=False): cv.boolean,
+            }
+        )
+    )
+
+
 CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(UniluxUartComponent),
             cv.Optional(CONF_T1, default={}): _channel_schema(CONF_T1),
             cv.Optional(CONF_T2, default={}): _channel_schema(CONF_T2),
-            # Opt-in two-way target-temperature control. Present this key to
-            # expose a climate entity; omit it to leave control disabled.
-            cv.Optional(CONF_CLIMATE): climate.climate_schema(
-                UniluxUartClimate
-            ).extend(cv.COMPONENT_SCHEMA),
+            # Two-way target-temperature control, exposed as a climate entity by
+            # default. Set "disabled: true" to suppress it.
+            cv.Optional(CONF_CLIMATE, default={}): _climate_schema(),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -80,7 +96,8 @@ async def to_code(config):
         sens = await sensor.new_sensor(conf)
         cg.add(getattr(var, f"set_{key}_sensor")(sens))
 
-    if (clim_conf := config.get(CONF_CLIMATE)) is not None:
+    clim_conf = config[CONF_CLIMATE]
+    if not clim_conf[CONF_DISABLED]:
         clim = cg.new_Pvariable(clim_conf[CONF_ID])
         await cg.register_component(clim, clim_conf)
         await climate.register_climate(clim, clim_conf)

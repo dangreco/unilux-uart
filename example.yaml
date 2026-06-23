@@ -39,10 +39,11 @@ external_components:
 # after its key. Override the name (or add filters), or set "disabled: true" to
 # suppress a channel entirely.
 #
-# The optional "climate" block exposes a two-way target-temperature control:
-# receiving a target-temperature frame updates the setpoint, and changing the
-# setpoint in Home Assistant transmits a frame back to the device. Its current
-# temperature mirrors the t1 channel.
+# The "climate" block exposes a two-way target-temperature control and is
+# created by default (named "Thermostat"): receiving a target-temperature frame
+# updates the setpoint, and changing the setpoint in Home Assistant transmits a
+# frame back to the device. Its current temperature mirrors the t1 channel.
+# Override the name/visual range below, or set "disabled: true" to suppress it.
 unilux_uart:
   t1:
     name: "Indoor Temperature"

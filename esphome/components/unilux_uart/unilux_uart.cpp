@@ -5,6 +5,7 @@
 
 #include "messages.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -22,6 +23,10 @@ static constexpr uint8_t AUP_TX_CHECKSUM = 0x00;
 static constexpr uint8_t AUP_TX_FLAG = 0x00;
 static constexpr uint8_t AUP_TX_TYPE = 0x01;
 static constexpr uint8_t AUP_TX_COMMAND = 0x10;
+
+// Setpoint used at startup until the device broadcasts its real target (0x2A),
+// so the climate is controllable and never shows the ambient value as target.
+static constexpr float DEFAULT_TARGET_TEMPERATURE = 20.0f;
 
 void UniluxUartComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Unilux UART:");
@@ -110,9 +115,19 @@ void UniluxUartComponent::log_frame_(const unilux::aup::Frame &frame) {
 // --- UniluxUartClimate ------------------------------------------------------
 
 void UniluxUartClimate::setup() {
-  // Start in the single supported mode so the entity has a defined state before
-  // the first frame arrives.
-  this->mode = climate::CLIMATE_MODE_AUTO;
+  // Restore the last setpoint across reboots if one was saved.
+  auto restore = this->restore_state_();
+  if (restore.has_value()) {
+    restore->apply(this);
+  }
+  // HEAT is a single, adjustable-setpoint mode; the device has no mode concept
+  // on the wire, so the entity stays in HEAT. Seed a non-NAN target so the
+  // control is live before the first 0x2A frame arrives (the device's 0x2A
+  // broadcast overrides it shortly after).
+  this->mode = climate::CLIMATE_MODE_HEAT;
+  if (std::isnan(this->target_temperature)) {
+    this->target_temperature = DEFAULT_TARGET_TEMPERATURE;
+  }
   this->publish_state();
 }
 
@@ -123,7 +138,7 @@ void UniluxUartClimate::dump_config() {
 climate::ClimateTraits UniluxUartClimate::traits() {
   climate::ClimateTraits traits;
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
-  traits.set_supported_modes({climate::CLIMATE_MODE_AUTO});
+  traits.set_supported_modes({climate::CLIMATE_MODE_HEAT});
   // Defaults; overridden by any `visual:` block in the YAML config.
   traits.set_visual_min_temperature(5.0f);
   traits.set_visual_max_temperature(35.0f);
@@ -141,19 +156,17 @@ void UniluxUartClimate::control(const climate::ClimateCall &call) {
           unilux::message::TargetTemperature(this->target_temperature, 0.0f));
     }
   }
-  this->mode = climate::CLIMATE_MODE_AUTO;
+  this->mode = climate::CLIMATE_MODE_HEAT;
   this->publish_state();
 }
 
 void UniluxUartClimate::publish_current_temperature(float temperature) {
   this->current_temperature = temperature;
-  this->mode = climate::CLIMATE_MODE_AUTO;
   this->publish_state();
 }
 
 void UniluxUartClimate::publish_target_temperature(float temperature) {
   this->target_temperature = temperature;
-  this->mode = climate::CLIMATE_MODE_AUTO;
   this->publish_state();
 }
 
