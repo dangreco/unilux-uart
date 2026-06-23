@@ -190,7 +190,7 @@ climate::ClimateTraits UniluxUartClimate::traits() {
                               climate::CLIMATE_MODE_HEAT_COOL});
   // Defaults; overridden by any `visual:` block in the YAML config.
   traits.set_visual_min_temperature(5.0f);
-  traits.set_visual_max_temperature(35.0f);
+  traits.set_visual_max_temperature(40.0f);
   traits.set_visual_temperature_step(0.5f);
   return traits;
 }

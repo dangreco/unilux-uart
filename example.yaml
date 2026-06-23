@@ -53,5 +53,5 @@ unilux_uart:
     name: "Thermostat"
     visual:
       min_temperature: 5 °C
-      max_temperature: 35 °C
+      max_temperature: 40 °C
       temperature_step: 0.5 °C
