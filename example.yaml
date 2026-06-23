@@ -38,8 +38,19 @@ external_components:
 # Each temperature channel (t1, t2) is published as a sensor by default, named
 # after its key. Override the name (or add filters), or set "disabled: true" to
 # suppress a channel entirely.
+#
+# The optional "climate" block exposes a two-way target-temperature control:
+# receiving a target-temperature frame updates the setpoint, and changing the
+# setpoint in Home Assistant transmits a frame back to the device. Its current
+# temperature mirrors the t1 channel.
 unilux_uart:
   t1:
     name: "Indoor Temperature"
   t2:
     disabled: true
+  climate:
+    name: "Thermostat"
+    visual:
+      min_temperature: 5 °C
+      max_temperature: 35 °C
+      temperature_step: 0.5 °C

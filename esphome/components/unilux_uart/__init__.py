@@ -8,14 +8,15 @@ from esphome.const import (
     UNIT_CELSIUS,
 )
 
-from esphome.components import sensor, uart
+from esphome.components import climate, sensor, uart
 
 CODEOWNERS = ["@dangreco"]
 DEPENDENCIES = ["uart"]
-AUTO_LOAD = ["sensor"]
+AUTO_LOAD = ["sensor", "climate"]
 
 CONF_T1 = "t1"
 CONF_T2 = "t2"
+CONF_CLIMATE = "climate"
 CONF_DISABLED = "disabled"
 
 CHANNELS = (CONF_T1, CONF_T2)
@@ -23,6 +24,9 @@ CHANNELS = (CONF_T1, CONF_T2)
 unilux_uart_ns = cg.esphome_ns.namespace("unilux_uart")
 UniluxUartComponent = unilux_uart_ns.class_(
     "UniluxUartComponent", cg.Component, uart.UARTDevice
+)
+UniluxUartClimate = unilux_uart_ns.class_(
+    "UniluxUartClimate", climate.Climate, cg.Component
 )
 
 
@@ -52,6 +56,11 @@ CONFIG_SCHEMA = (
             cv.GenerateID(): cv.declare_id(UniluxUartComponent),
             cv.Optional(CONF_T1, default={}): _channel_schema(CONF_T1),
             cv.Optional(CONF_T2, default={}): _channel_schema(CONF_T2),
+            # Opt-in two-way target-temperature control. Present this key to
+            # expose a climate entity; omit it to leave control disabled.
+            cv.Optional(CONF_CLIMATE): climate.climate_schema(
+                UniluxUartClimate
+            ).extend(cv.COMPONENT_SCHEMA),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -70,5 +79,12 @@ async def to_code(config):
             continue
         sens = await sensor.new_sensor(conf)
         cg.add(getattr(var, f"set_{key}_sensor")(sens))
+
+    if (clim_conf := config.get(CONF_CLIMATE)) is not None:
+        clim = cg.new_Pvariable(clim_conf[CONF_ID])
+        await cg.register_component(clim, clim_conf)
+        await climate.register_climate(clim, clim_conf)
+        cg.add(clim.set_parent(var))
+        cg.add(var.set_climate(clim))
 
     cg.add_library("unilux-uart", "main", "https://github.com/dangreco/unilux-uart.git")
