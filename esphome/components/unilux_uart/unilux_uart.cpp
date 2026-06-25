@@ -123,6 +123,62 @@ void UniluxUartComponent::send_message(const unilux::Message &msg) {
   this->write_array(out.data(), out.size());
 }
 
+void UniluxUartComponent::send_temperature_setting(uint8_t msg_id,
+                                                   float value) {
+  switch (msg_id) {
+  case unilux::message::TemperatureOffset::ID:
+    this->send_message(unilux::message::TemperatureOffset(value));
+    break;
+  case unilux::message::SwitchingDiffHeat::ID:
+    this->send_message(unilux::message::SwitchingDiffHeat(value));
+    break;
+  case unilux::message::SwitchingDiffCool::ID:
+    this->send_message(unilux::message::SwitchingDiffCool(value));
+    break;
+  case unilux::message::ChangeoverHeat::ID:
+    this->send_message(unilux::message::ChangeoverHeat(value));
+    break;
+  case unilux::message::ChangeoverCool::ID:
+    this->send_message(unilux::message::ChangeoverCool(value));
+    break;
+  default:
+    ESP_LOGW(TAG, "No temperature setting for msg_id 0x%02X", msg_id);
+    break;
+  }
+}
+
+void UniluxUartComponent::send_byte_setting(uint8_t msg_id, uint8_t value) {
+  switch (msg_id) {
+  case unilux::message::SystemMode::ID:
+    this->send_message(unilux::message::SystemMode(
+        static_cast<unilux::message::SystemMode::Value>(value)));
+    break;
+  case unilux::message::DisplayUnit::ID:
+    this->send_message(unilux::message::DisplayUnit(
+        static_cast<unilux::message::DisplayUnit::Value>(value)));
+    break;
+  default:
+    ESP_LOGW(TAG, "No byte setting for msg_id 0x%02X", msg_id);
+    break;
+  }
+}
+
+void UniluxUartComponent::publish_number_(uint8_t msg_id, float value) {
+  for (UniluxNumber *number : this->numbers_) {
+    if (number->get_msg_id() == msg_id) {
+      number->publish_state(value);
+    }
+  }
+}
+
+void UniluxUartComponent::publish_select_(uint8_t msg_id, uint8_t value) {
+  for (UniluxSelect *select : this->selects_) {
+    if (select->get_msg_id() == msg_id) {
+      select->publish_byte(value);
+    }
+  }
+}
+
 void UniluxUartComponent::loop() {
   uint8_t byte;
   while (this->available() && this->read_byte(&byte)) {
@@ -185,6 +241,29 @@ void UniluxUartComponent::log_frame_(const unilux::aup::Frame &frame) {
               // device state; this does not transmit).
               if (this->climate_ != nullptr)
                 this->climate_->publish_fan_speed(m.value);
+            } else if constexpr (std::is_same_v<T,
+                                                unilux::message::AllConfig>) {
+              // Full config block (0x76); logged only for now.
+              ESP_LOGD(TAG, "│ %s", m.to_string().c_str());
+            } else if constexpr (std::is_same_v<T, unilux::message::Schedule>) {
+              // Weekly program (0x78); logged only for now.
+              ESP_LOGD(TAG, "│ %s", m.to_string().c_str());
+            } else if constexpr (
+                std::is_same_v<T, unilux::message::TemperatureOffset> ||
+                std::is_same_v<T, unilux::message::SwitchingDiffHeat> ||
+                std::is_same_v<T, unilux::message::SwitchingDiffCool> ||
+                std::is_same_v<T, unilux::message::ChangeoverHeat> ||
+                std::is_same_v<T, unilux::message::ChangeoverCool>) {
+              // Scalar-temperature setting; reflect onto its number entity.
+              ESP_LOGD(TAG, "│ %s", m.to_string().c_str());
+              this->publish_number_(T::ID, m.value);
+            } else if constexpr (std::is_same_v<T,
+                                                unilux::message::SystemMode> ||
+                                 std::is_same_v<T,
+                                                unilux::message::DisplayUnit>) {
+              // Enum-byte setting; reflect onto its select entity.
+              ESP_LOGD(TAG, "│ %s", m.to_string().c_str());
+              this->publish_select_(T::ID, static_cast<uint8_t>(m.value));
             }
           },
           *msg);
@@ -339,6 +418,40 @@ void UniluxUartClimate::publish_fan_speed(
 void UniluxUartClimate::publish_combined_mode_() {
   this->mode = this->power_on_ ? this->active_mode_ : climate::CLIMATE_MODE_OFF;
   this->publish_state();
+}
+
+// --- UniluxNumber / UniluxSelect --------------------------------------------
+
+void UniluxNumber::control(float value) {
+  if (this->parent_ != nullptr) {
+    this->parent_->send_temperature_setting(this->msg_id_, value);
+  }
+  this->publish_state(value);
+}
+
+void UniluxSelect::control(const std::string &value) {
+  auto index = this->index_of(value);
+  if (index.has_value() && *index < this->option_bytes_.size()) {
+    if (this->parent_ != nullptr) {
+      this->parent_->send_byte_setting(this->msg_id_,
+                                       this->option_bytes_[*index]);
+    }
+    this->publish_state(value);
+  }
+}
+
+void UniluxSelect::publish_byte(uint8_t value) {
+  for (size_t i = 0; i < this->option_bytes_.size(); i++) {
+    if (this->option_bytes_[i] == value) {
+      auto option = this->at(i);
+      if (option.has_value()) {
+        this->publish_state(*option);
+      }
+      return;
+    }
+  }
+  ESP_LOGW(TAG, "Select 0x%02X received unmapped byte 0x%02X", this->msg_id_,
+           value);
 }
 
 } // namespace unilux_uart

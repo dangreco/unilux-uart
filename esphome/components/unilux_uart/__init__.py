@@ -8,11 +8,11 @@ from esphome.const import (
     UNIT_CELSIUS,
 )
 
-from esphome.components import climate, sensor, uart
+from esphome.components import climate, number, select, sensor, uart
 
 CODEOWNERS = ["@dangreco"]
 DEPENDENCIES = ["uart"]
-AUTO_LOAD = ["sensor", "climate"]
+AUTO_LOAD = ["sensor", "climate", "number", "select"]
 
 CONF_T1 = "t1"
 CONF_T2 = "t2"
@@ -28,6 +28,33 @@ UniluxUartComponent = unilux_uart_ns.class_(
 UniluxUartClimate = unilux_uart_ns.class_(
     "UniluxUartClimate", climate.Climate, cg.Component
 )
+UniluxNumber = unilux_uart_ns.class_("UniluxNumber", number.Number)
+UniluxSelect = unilux_uart_ns.class_("UniluxSelect", select.Select)
+
+# Per-setting number entities (scalar temperatures, i16 BE tenths of a degree).
+# key -> (msg_id, default name, min, max, step)
+NUMBER_SETTINGS = {
+    "temperature_offset": (0x56, "Temperature Offset", -5.0, 5.0, 0.5),
+    "switching_diff_heat": (0x58, "Switching Differential (Heat)", 2.0, 4.0, 0.5),
+    "switching_diff_cool": (0x59, "Switching Differential (Cool)", 2.0, 4.0, 0.5),
+    "changeover_heat": (0x5D, "Heating Changeover Temperature", 10.0, 25.0, 0.5),
+    "changeover_cool": (0x5E, "Cooling Changeover Temperature", 20.0, 40.0, 0.5),
+}
+
+# Per-setting select entities (enum bytes). key -> (msg_id, default name, options)
+# where options is an ordered mapping of displayed label -> on-wire byte.
+SELECT_SETTINGS = {
+    "system_mode": (
+        0x23,
+        "System Mode",
+        {"2 Pipe": 0x00, "4 Pipe": 0x01, "2 Pipe Auto": 0x02, "2 Pipe Heat": 0x03},
+    ),
+    "display_unit": (
+        0x2C,
+        "Temperature Display Unit",
+        {"Celsius": 0x02, "Fahrenheit": 0x03},
+    ),
+}
 
 
 def _channel_schema(key):
@@ -68,6 +95,36 @@ def _climate_schema():
     )
 
 
+def _number_schema(default_name):
+    """Number schema for one scalar-temperature setting.
+
+    Enabled by default with the given name; set ``disabled: true`` to suppress.
+    """
+    return number.number_schema(
+        UniluxNumber,
+        unit_of_measurement=UNIT_CELSIUS,
+        device_class=DEVICE_CLASS_TEMPERATURE,
+    ).extend(
+        {
+            cv.Optional(CONF_NAME, default=default_name): cv.string,
+            cv.Optional(CONF_DISABLED, default=False): cv.boolean,
+        }
+    )
+
+
+def _select_schema(default_name):
+    """Select schema for one enum-byte setting.
+
+    Enabled by default with the given name; set ``disabled: true`` to suppress.
+    """
+    return select.select_schema(UniluxSelect).extend(
+        {
+            cv.Optional(CONF_NAME, default=default_name): cv.string,
+            cv.Optional(CONF_DISABLED, default=False): cv.boolean,
+        }
+    )
+
+
 CONFIG_SCHEMA = (
     cv.Schema(
         {
@@ -77,6 +134,15 @@ CONFIG_SCHEMA = (
             # Two-way target-temperature control, exposed as a climate entity by
             # default. Set "disabled: true" to suppress it.
             cv.Optional(CONF_CLIMATE, default={}): _climate_schema(),
+            # Per-setting number and select entities, all enabled by default.
+            **{
+                cv.Optional(key, default={}): _number_schema(name)
+                for key, (_, name, _, _, _) in NUMBER_SETTINGS.items()
+            },
+            **{
+                cv.Optional(key, default={}): _select_schema(name)
+                for key, (_, name, _) in SELECT_SETTINGS.items()
+            },
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -103,5 +169,26 @@ async def to_code(config):
         await climate.register_climate(clim, clim_conf)
         cg.add(clim.set_parent(var))
         cg.add(var.set_climate(clim))
+
+    for key, (msg_id, _, lo, hi, step) in NUMBER_SETTINGS.items():
+        conf = config[key]
+        if conf[CONF_DISABLED]:
+            continue
+        num = await number.new_number(
+            conf, min_value=lo, max_value=hi, step=step
+        )
+        cg.add(num.set_parent(var))
+        cg.add(num.set_msg_id(msg_id))
+        cg.add(var.add_number(num))
+
+    for key, (msg_id, _, options) in SELECT_SETTINGS.items():
+        conf = config[key]
+        if conf[CONF_DISABLED]:
+            continue
+        sel = await select.new_select(conf, options=list(options.keys()))
+        cg.add(sel.set_parent(var))
+        cg.add(sel.set_msg_id(msg_id))
+        cg.add(sel.set_option_bytes(list(options.values())))
+        cg.add(var.add_select(sel))
 
     cg.add_library("unilux-uart", "main", "https://github.com/dangreco/unilux-uart.git")

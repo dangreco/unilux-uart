@@ -50,11 +50,20 @@
 /// @endcode
 
 #include "message.hpp"
+#include "messages/all_config.hpp"
+#include "messages/changeover_cool.hpp"
+#include "messages/changeover_heat.hpp"
+#include "messages/display_unit.hpp"
 #include "messages/fan_speed.hpp"
 #include "messages/mode.hpp"
 #include "messages/power.hpp"
+#include "messages/schedule.hpp"
+#include "messages/switching_diff_cool.hpp"
+#include "messages/switching_diff_heat.hpp"
+#include "messages/system_mode.hpp"
 #include "messages/target_temperature.hpp"
 #include "messages/temperature.hpp"
+#include "messages/temperature_offset.hpp"
 #include "wmmm.hpp"
 
 #include <optional>
@@ -66,9 +75,12 @@ namespace unilux {
 ///
 /// This variant is the single source of truth for the set of message types the
 /// library can decode; @ref decode_message dispatches over its alternatives.
-using AnyMessage =
-    std::variant<message::Temperature, message::TargetTemperature,
-                 message::Mode, message::Power, message::FanSpeed>;
+using AnyMessage = std::variant<
+    message::Temperature, message::TargetTemperature, message::Mode,
+    message::Power, message::FanSpeed, message::AllConfig, message::Schedule,
+    message::TemperatureOffset, message::SwitchingDiffHeat,
+    message::SwitchingDiffCool, message::ChangeoverHeat,
+    message::ChangeoverCool, message::SystemMode, message::DisplayUnit>;
 
 /// @brief Decode a frame into its concrete message type, selected by @c msg_id.
 /// @param frame The generic WMMM frame to interpret.

@@ -49,4 +49,23 @@ inline void to_be16(uint8_t *bytes, uint16_t value) {
   bytes[1] = static_cast<uint8_t>(value & 0xFF); // LSB
 }
 
+/// @brief Read a big-endian (MSB-first) 32-bit value from a buffer.
+/// @param bytes Pointer to at least four readable bytes.
+/// @return The decoded value in host byte order.
+inline uint32_t from_be32(const uint8_t *bytes) {
+  return (static_cast<uint32_t>(bytes[0]) << 24) |
+         (static_cast<uint32_t>(bytes[1]) << 16) |
+         (static_cast<uint32_t>(bytes[2]) << 8) | bytes[3];
+}
+
+/// @brief Write a 32-bit value to a buffer in big-endian (MSB-first) order.
+/// @param bytes Pointer to at least four writable bytes.
+/// @param value The value to serialise.
+inline void to_be32(uint8_t *bytes, uint32_t value) {
+  bytes[0] = static_cast<uint8_t>(value >> 24); // MSB
+  bytes[1] = static_cast<uint8_t>(value >> 16);
+  bytes[2] = static_cast<uint8_t>(value >> 8);
+  bytes[3] = static_cast<uint8_t>(value & 0xFF); // LSB
+}
+
 } // namespace unilux
