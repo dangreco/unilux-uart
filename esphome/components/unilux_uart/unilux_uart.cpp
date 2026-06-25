@@ -26,7 +26,13 @@ static constexpr uint8_t AUP_TX_COMMAND = 0x10;
 
 // Setpoint used at startup until the device broadcasts its real target (0x2A),
 // so the climate is controllable and never shows the ambient value as target.
-static constexpr float DEFAULT_TARGET_TEMPERATURE = 20.0f;
+static constexpr float DEFAULT_TARGET_TEMPERATURE = 21.0f;
+
+// Post-boot rebroadcast window: re-send ESPHome-side values to the device this
+// many times, spaced SYNC_INTERVAL_MS apart, so the MCU reliably picks them up.
+static constexpr const char *SYNC_INTERVAL_NAME = "sync";
+static constexpr uint32_t SYNC_INTERVAL_MS = 5000;
+static constexpr int SYNC_REPEAT_COUNT = 12;
 
 // Map the device's HVAC mode (0x5C) to a Home Assistant climate mode. The
 // device's "auto" is a heat-or-cool mode with a single adjustable setpoint, so
@@ -105,7 +111,24 @@ void UniluxUartComponent::dump_config() {
   check_uart_settings(115200);
 }
 
-void UniluxUartComponent::setup() {}
+void UniluxUartComponent::setup() {
+  // Rebroadcast current ESPHome-side values to the device for a short window
+  // after boot, in case the MCU missed the per-entity boot transmit. The timer
+  // self-cancels in sync_iteration_() after SYNC_REPEAT_COUNT iterations.
+  this->set_interval(SYNC_INTERVAL_NAME, SYNC_INTERVAL_MS,
+                     [this] { this->sync_iteration_(); });
+}
+
+void UniluxUartComponent::sync_iteration_() {
+  for (UniluxNumber *number : this->numbers_)
+    number->sync_to_device();
+  for (UniluxSelect *select : this->selects_)
+    select->sync_to_device();
+  if (this->climate_ != nullptr)
+    this->climate_->sync_to_device();
+  if (++this->sync_count_ >= SYNC_REPEAT_COUNT)
+    this->cancel_interval(SYNC_INTERVAL_NAME);
+}
 
 void UniluxUartComponent::send_message(const unilux::Message &msg) {
   // Message -> WMMM frame -> WMMM bytes -> AUP frame -> AUP bytes -> UART.
@@ -283,10 +306,15 @@ void UniluxUartComponent::log_frame_(const unilux::aup::Frame &frame) {
 // --- UniluxUartClimate ------------------------------------------------------
 
 void UniluxUartClimate::setup() {
-  // Restore the last setpoint across reboots if one was saved.
+  // Restore the last setpoint/mode/fan across reboots if one was saved.
   auto restore = this->restore_state_();
   if (restore.has_value()) {
     restore->apply(this);
+  } else {
+    // No saved state: apply manual defaults (device "auto" = HEAT_COOL).
+    this->target_temperature = DEFAULT_TARGET_TEMPERATURE;
+    this->mode = climate::CLIMATE_MODE_HEAT_COOL;
+    this->fan_mode = climate::CLIMATE_FAN_AUTO;
   }
   // Derive the power state and active mode from the restored HA mode; the
   // device's 0x21/0x5C broadcasts then set the real values.
@@ -308,6 +336,9 @@ void UniluxUartClimate::setup() {
   if (!this->fan_mode.has_value()) {
     this->fan_mode = climate::CLIMATE_FAN_AUTO;
   }
+  // Transmit the resolved state to the device now; the post-boot rebroadcast
+  // window in the parent re-sends it for a while afterwards.
+  this->sync_to_device();
   this->publish_state();
 }
 
@@ -420,13 +451,63 @@ void UniluxUartClimate::publish_combined_mode_() {
   this->publish_state();
 }
 
+void UniluxUartClimate::sync_to_device() {
+  if (this->parent_ == nullptr || std::isnan(this->target_temperature))
+    return;
+  this->parent_->send_message(
+      unilux::message::TargetTemperature(this->target_temperature, 0.0f));
+  this->parent_->send_message(unilux::message::Power(this->power_on_));
+  if (this->power_on_) {
+    this->parent_->send_message(
+        unilux::message::Mode(climate_mode_to_device(this->active_mode_)));
+  }
+  if (this->fan_mode.has_value()) {
+    this->parent_->send_message(
+        unilux::message::FanSpeed(climate_fan_to_device(*this->fan_mode)));
+  }
+}
+
 // --- UniluxNumber / UniluxSelect --------------------------------------------
+
+void UniluxNumber::setup() {
+  this->pref_ = this->make_entity_preference<float>();
+  float value = this->initial_value_;
+  this->pref_.load(&value); // no-op on first boot; leaves initial_value_ intact
+  this->publish_state(value);
+  this->sync_to_device();
+}
+
+void UniluxNumber::sync_to_device() {
+  if (this->parent_ != nullptr && !std::isnan(this->state))
+    this->parent_->send_temperature_setting(this->msg_id_, this->state);
+}
 
 void UniluxNumber::control(float value) {
   if (this->parent_ != nullptr) {
     this->parent_->send_temperature_setting(this->msg_id_, value);
   }
   this->publish_state(value);
+  this->pref_.save(&value);
+}
+
+void UniluxSelect::setup() {
+  if (!this->restore_)
+    return; // not restored: wait for the device broadcast (e.g. display_unit)
+  this->pref_ = this->make_entity_preference<size_t>();
+  size_t index = this->initial_index_;
+  if (!this->pref_.load(&index) || !this->has_index(index))
+    index = this->initial_index_; // first boot or stale index -> manual default
+  this->publish_state(index);
+  this->sync_to_device();
+}
+
+void UniluxSelect::sync_to_device() {
+  if (this->parent_ == nullptr)
+    return;
+  auto index = this->active_index();
+  if (index.has_value() && *index < this->option_bytes_.size())
+    this->parent_->send_byte_setting(this->msg_id_,
+                                     this->option_bytes_[*index]);
 }
 
 void UniluxSelect::control(const std::string &value) {
@@ -437,6 +518,8 @@ void UniluxSelect::control(const std::string &value) {
                                        this->option_bytes_[*index]);
     }
     this->publish_state(value);
+    if (this->restore_)
+      this->pref_.save(&*index);
   }
 }
 

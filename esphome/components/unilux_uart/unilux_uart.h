@@ -6,6 +6,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/component.h"
+#include "esphome/core/preference_backend.h"
 
 #include "aup.hpp"
 #include "message.hpp"
@@ -13,6 +14,7 @@
 #include "messages/mode.hpp"
 #include "wmmm.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -63,6 +65,10 @@ protected:
   /// Decode the WMMM message in @p frame, log it, and publish entity states.
   void log_frame_(const unilux::aup::Frame &frame);
 
+  /// Rebroadcast current ESPHome-side values to the device; self-cancels its
+  /// interval timer after SYNC_REPEAT_COUNT iterations.
+  void sync_iteration_();
+
   unilux::aup::Decoder decoder_;     ///< AUP byte-framing decoder.
   unilux::Decoder wmmm_decoder_;     ///< WMMM message decoder.
   unilux::Encoder wmmm_encoder_;     ///< WMMM message encoder (TX).
@@ -78,27 +84,37 @@ protected:
   /// Setting entities; each knows its own msg_id for receive-side routing.
   std::vector<UniluxNumber *> numbers_;
   std::vector<UniluxSelect *> selects_;
+
+  /// Remaining rebroadcast iterations in the post-boot sync window.
+  int sync_count_{0};
 };
 
 /// @brief A device setting surfaced as an ESPHome number (a scalar temperature,
 /// i16 BE tenths of a degree). Changing it transmits the matching WMMM frame.
-class UniluxNumber : public number::Number {
+class UniluxNumber : public number::Number, public Component {
 public:
   void set_parent(UniluxUartComponent *parent) { this->parent_ = parent; }
   void set_msg_id(uint8_t msg_id) { this->msg_id_ = msg_id; }
   uint8_t get_msg_id() const { return this->msg_id_; }
+  void set_initial_value(float value) { this->initial_value_ = value; }
+
+  void setup() override;
+  /// Transmit the current value to the device (no-op until one exists).
+  void sync_to_device();
 
 protected:
   void control(float value) override;
 
   UniluxUartComponent *parent_{nullptr};
   uint8_t msg_id_{0};
+  float initial_value_{NAN};
+  ESPPreferenceObject pref_;
 };
 
 /// @brief A device setting surfaced as an ESPHome select (an enum byte).
 /// Changing it transmits the matching WMMM frame. The displayed options map
 /// one-to-one (by index) to @ref option_bytes_.
-class UniluxSelect : public select::Select {
+class UniluxSelect : public select::Select, public Component {
 public:
   void set_parent(UniluxUartComponent *parent) { this->parent_ = parent; }
   void set_msg_id(uint8_t msg_id) { this->msg_id_ = msg_id; }
@@ -106,9 +122,15 @@ public:
   void set_option_bytes(const std::vector<uint8_t> &bytes) {
     this->option_bytes_ = bytes;
   }
+  void set_restore(bool restore) { this->restore_ = restore; }
+  void set_initial_index(size_t index) { this->initial_index_ = index; }
 
   /// Publish the option whose mapped byte equals @p value, if any.
   void publish_byte(uint8_t value);
+
+  void setup() override;
+  /// Transmit the current option to the device (no-op until one exists).
+  void sync_to_device();
 
 protected:
   void control(const std::string &value) override;
@@ -116,6 +138,9 @@ protected:
   UniluxUartComponent *parent_{nullptr};
   uint8_t msg_id_{0};
   std::vector<uint8_t> option_bytes_;
+  bool restore_{false};
+  size_t initial_index_{0};
+  ESPPreferenceObject pref_;
 };
 
 /// @brief Two-way target-temperature control surfaced as an ESPHome climate.
@@ -129,6 +154,9 @@ public:
 
   void setup() override;
   void dump_config() override;
+
+  /// Transmit the current setpoint, power/mode, and fan speed to the device.
+  void sync_to_device();
 
   /// Update the displayed current temperature (driven by the Temperature
   /// message's first channel) and republish.

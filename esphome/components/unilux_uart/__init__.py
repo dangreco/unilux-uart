@@ -5,7 +5,6 @@ from esphome.const import (
     CONF_NAME,
     DEVICE_CLASS_TEMPERATURE,
     STATE_CLASS_MEASUREMENT,
-    UNIT_CELSIUS,
 )
 
 from esphome.components import climate, number, select, sensor, uart
@@ -28,31 +27,36 @@ UniluxUartComponent = unilux_uart_ns.class_(
 UniluxUartClimate = unilux_uart_ns.class_(
     "UniluxUartClimate", climate.Climate, cg.Component
 )
-UniluxNumber = unilux_uart_ns.class_("UniluxNumber", number.Number)
-UniluxSelect = unilux_uart_ns.class_("UniluxSelect", select.Select)
+UniluxNumber = unilux_uart_ns.class_("UniluxNumber", number.Number, cg.Component)
+UniluxSelect = unilux_uart_ns.class_("UniluxSelect", select.Select, cg.Component)
 
 # Per-setting number entities (scalar temperatures, i16 BE tenths of a degree).
-# key -> (msg_id, default name, min, max, step)
+# key -> (msg_id, default name, min, max, step, initial_value)
 NUMBER_SETTINGS = {
-    "temperature_offset": (0x56, "Temperature Offset", -5.0, 5.0, 0.5),
-    "switching_diff_heat": (0x58, "Switching Differential (Heat)", 2.0, 4.0, 0.5),
-    "switching_diff_cool": (0x59, "Switching Differential (Cool)", 2.0, 4.0, 0.5),
-    "changeover_heat": (0x5D, "Heating Changeover Temperature", 10.0, 25.0, 0.5),
-    "changeover_cool": (0x5E, "Cooling Changeover Temperature", 20.0, 40.0, 0.5),
+    "temperature_offset": (0x56, "Temperature Offset", -5.0, 5.0, 0.5, 0.0),
+    "switching_diff_heat": (0x58, "Switching Differential (Heat)", 2.0, 4.0, 0.5, 2.0),
+    "switching_diff_cool": (0x59, "Switching Differential (Cool)", 2.0, 4.0, 0.5, 2.0),
+    "changeover_heat": (0x5D, "Heating Changeover Temperature", 10.0, 25.0, 0.5, 18.0),
+    "changeover_cool": (0x5E, "Cooling Changeover Temperature", 20.0, 40.0, 0.5, 23.0),
 }
 
-# Per-setting select entities (enum bytes). key -> (msg_id, default name, options)
-# where options is an ordered mapping of displayed label -> on-wire byte.
+# Per-setting select entities (enum bytes). key -> (msg_id, default name, options,
+# restore, initial_index) where options is an ordered mapping of displayed label
+# -> on-wire byte.
 SELECT_SETTINGS = {
     "system_mode": (
         0x23,
         "System Mode",
         {"2 Pipe": 0x00, "4 Pipe": 0x01, "2 Pipe Auto": 0x02, "2 Pipe Heat": 0x03},
+        True,
+        0,
     ),
     "display_unit": (
         0x2C,
         "Temperature Display Unit",
         {"Celsius": 0x02, "Fahrenheit": 0x03},
+        False,
+        0,
     ),
 }
 
@@ -65,7 +69,6 @@ def _channel_schema(key):
     the channel entirely.
     """
     return sensor.sensor_schema(
-        unit_of_measurement=UNIT_CELSIUS,
         accuracy_decimals=1,
         device_class=DEVICE_CLASS_TEMPERATURE,
         state_class=STATE_CLASS_MEASUREMENT,
@@ -102,7 +105,6 @@ def _number_schema(default_name):
     """
     return number.number_schema(
         UniluxNumber,
-        unit_of_measurement=UNIT_CELSIUS,
         device_class=DEVICE_CLASS_TEMPERATURE,
     ).extend(
         {
@@ -137,11 +139,11 @@ CONFIG_SCHEMA = (
             # Per-setting number and select entities, all enabled by default.
             **{
                 cv.Optional(key, default={}): _number_schema(name)
-                for key, (_, name, _, _, _) in NUMBER_SETTINGS.items()
+                for key, (_, name, _, _, _, _) in NUMBER_SETTINGS.items()
             },
             **{
                 cv.Optional(key, default={}): _select_schema(name)
-                for key, (_, name, _) in SELECT_SETTINGS.items()
+                for key, (_, name, _, _, _) in SELECT_SETTINGS.items()
             },
         }
     )
@@ -170,25 +172,30 @@ async def to_code(config):
         cg.add(clim.set_parent(var))
         cg.add(var.set_climate(clim))
 
-    for key, (msg_id, _, lo, hi, step) in NUMBER_SETTINGS.items():
+    for key, (msg_id, _, lo, hi, step, initial_value) in NUMBER_SETTINGS.items():
         conf = config[key]
         if conf[CONF_DISABLED]:
             continue
         num = await number.new_number(
             conf, min_value=lo, max_value=hi, step=step
         )
+        await cg.register_component(num, conf)
         cg.add(num.set_parent(var))
         cg.add(num.set_msg_id(msg_id))
+        cg.add(num.set_initial_value(initial_value))
         cg.add(var.add_number(num))
 
-    for key, (msg_id, _, options) in SELECT_SETTINGS.items():
+    for key, (msg_id, _, options, restore, initial_index) in SELECT_SETTINGS.items():
         conf = config[key]
         if conf[CONF_DISABLED]:
             continue
         sel = await select.new_select(conf, options=list(options.keys()))
+        await cg.register_component(sel, conf)
         cg.add(sel.set_parent(var))
         cg.add(sel.set_msg_id(msg_id))
         cg.add(sel.set_option_bytes(list(options.values())))
+        cg.add(sel.set_restore(restore))
+        cg.add(sel.set_initial_index(initial_index))
         cg.add(var.add_select(sel))
 
     cg.add_library("unilux-uart", "main", "https://github.com/dangreco/unilux-uart.git")
